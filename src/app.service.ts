@@ -2,51 +2,110 @@ import { Injectable } from '@nestjs/common';
 import * as Imap from 'imap';
 import * as nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
+import { Server, UserSchema } from './user.model';
+import { Model } from 'mongoose';
+import { InjectModel } from '@nestjs/mongoose';
 
 @Injectable()
 export class AppService {
+  
   private transporter;
-  private imapConfig: Imap.Config = {
-    user: 'gokulsidharth02@gmail.com',
-    password: 'wypqevvlfqdcwcqb',
-    host: 'imap.gmail.com',
-    port: 993,
-    tls: true,
-    authTimeout: 30000,
-    connTimeout: 30000,
-    tlsOptions: {
-      rejectUnauthorized: false,
-    },
+  // private imapConfig: Imap.Config = {
+  //   user: 'arundaviddev@gmail.com',
+  //   password: 'srvnktnfvidfravs',
+  //   host: 'imap.gmail.com',
+  //   port: 993,
+  //   tls: true,
+  //   authTimeout: 30000,
+  //   connTimeout: 30000,
+  //   tlsOptions: {
+  //     rejectUnauthorized: false,
+  //   },
+  // }
+  private imapConfig: Imap.Config;
+
+  // constructor(@InjectModel(User.name) private readonly userModel: Model<User>) {
+  //   this.fetchImapConfig();
+  //   this.transporter = nodemailer.createTransport({
+  //     service: 'gmail',
+  //     auth: {
+  //       user: 'arundaviddev@gmail.com',
+  //       pass: 'srvnktnfvidfravs'
+  //     },
+  //     tls: {
+  //       rejectUnauthorized: false,
+  //     },
+  //   })
+  // }
+  constructor(
+    @InjectModel(Server.name) private readonly userModel: Model<Server>,
+  ) {
+    // Fetch the IMAP configuration during service initialization
+    this.fetchImapConfig().then(() => {
+      // Create transporter using fetched IMAP configuration
+      this.transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: this.imapConfig.user,
+          pass: this.imapConfig.password
+        },
+        tls: {
+          rejectUnauthorized: false,
+        },
+      });
+    });
+  }
+  private async fetchImapConfig() {
+    try {
+      const users = await this.userModel.find().exec();
+      if (users.length > 0) {
+        // Assuming you have a single user configuration, otherwise handle accordingly
+        const user = users[0];
+        // Extract IMAP configuration from the user object
+        this.imapConfig = {
+          user: user.email, // Assuming user.email holds the IMAP user
+          password: user.password, // Assuming user.imapPassword holds the IMAP password
+          host: 'imap.gmail.com',
+          port: 993,
+          tls: true,
+          authTimeout: 30000,
+          connTimeout: 30000,
+          tlsOptions: {
+            rejectUnauthorized: false,
+          },
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching IMAP configuration:', error);
+    }
   }
 
-  constructor() {
-    this.transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: 'gokulsidharth02@gmail.com',
-        pass: 'wypqevvlfqdcwcqb'
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-    })
-  }
 
-  async sendReply(to) {
+  async sendReply(to, messageId, isInInbox) {
+    const currentDate = new Date().toISOString().split('T')[0];
+    // const replymessage = messageId.replace(/[<>]/g, '');
     const mailOptions = {
       from: this.imapConfig.user,
       to: to,
-      subject: 'reply from company mail12',
-      text: 'this is automated reply from company mail12'
+      subject: 'reply from company -'+currentDate,
+      text: 'this is automated reply from company mail'+ currentDate+'....',  
+      inReplyTo: messageId,
+      references: [messageId], 
+    }
+    if (isInInbox) {
+      // Set the `inReplyTo` and `references` headers to maintain the same thread
+      mailOptions.inReplyTo = messageId;
+      mailOptions.references = [messageId];
     }
 
     try {
+      console.log('messagedetails',mailOptions);
       const reply = await this.transporter.sendMail(mailOptions);
-      console.log('reply sent successfully');
+      console.log('reply sent successfully',reply);
       return {
         success: true,
         message: 'reply sent successfully',
-        reply,
+        // reply,
       }
     } catch (error) {
       console.log('Error sending reply:', error);
@@ -57,6 +116,7 @@ export class AppService {
     }
   }
 
+
   async getEmail(): Promise<any> {
     return new Promise(async (resolve, reject) => {
       try {
@@ -66,9 +126,9 @@ export class AppService {
           const parsingPromises = [];
           const emailDetails = [];
 
-          imap.once('ready', () => {
+          imap.once('ready', () => {  
             imap.openBox('INBOX', false, () => {
-              imap.search(['UNSEEN', ['FROM', 'rajakumarandevloper@gmail.com']], (err, results) => {
+              imap.search(['UNSEEN', ['FROM', 'campaigne02@gmail.com']], (err, results) => {
                 if (err) {
                   console.log('Error searching for unseen emails:', err);
                   imap.end();
@@ -97,11 +157,12 @@ export class AppService {
                           return;
                         }
                         console.log('Received Email:', parsed);
+                        const isInInbox = results.includes(parsed.messageId);
                         emailDetails.push({ parsed });
                         
                         setTimeout(async () => {
-                          const { parsed } = emailDetails[0]; // Assuming you want to reply to the first email
-                          this.sendReply(emailDetails[0].parsed.from.value[0].address)
+                          const { parsed } = emailDetails[0];
+                          this.sendReply(emailDetails[0].parsed.from.value[0].address, emailDetails[0].parsed.messageId, isInInbox)
                         }, 120000); 
                         count++;
 
@@ -157,6 +218,18 @@ export class AppService {
       }
     });
   }
+
+  async createUser(email: string, password: string): Promise<Server> {
+    const createdUser = new this.userModel({ email, password });
+    return createdUser.save();
+  }
+
+  async getUsers(): Promise<Server[]> {
+    const users = await this.userModel.find().exec();
+    console.log('Retrieved users:', users);
+    return users;
+  }
+
 }
 
 
