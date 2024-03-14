@@ -5,6 +5,8 @@ import { simpleParser } from 'mailparser';
 import { Server, UserSchema } from './user.model';
 import { Model } from 'mongoose';
 import { InjectModel } from '@nestjs/mongoose';
+import { AccountCredentials } from "./account.schema";
+import { promises } from 'dns';
 
 @Injectable()
 export class AppService {
@@ -39,6 +41,7 @@ export class AppService {
   // }
   constructor(
     @InjectModel(Server.name) private readonly userModel: Model<Server>,
+    @InjectModel(AccountCredentials.name) private readonly accountCredentialsModel: Model<AccountCredentials>,
   ) {
     // Fetch the IMAP configuration during service initialization
     this.fetchImapConfig().then(() => {
@@ -81,22 +84,22 @@ export class AppService {
   }
 
 
-  async sendReply(to, messageId, isInInbox) {
+  async sendReply(to, messageId, subject) {
     const currentDate = new Date().toISOString().split('T')[0];
     // const replymessage = messageId.replace(/[<>]/g, '');
     const mailOptions = {
       from: this.imapConfig.user,
       to: to,
-      subject: 'reply from company -'+currentDate,
+      subject: subject+currentDate,
       text: 'this is automated reply from company mail'+ currentDate+'....',  
       inReplyTo: messageId,
       references: [messageId], 
     }
-    if (isInInbox) {
-      // Set the `inReplyTo` and `references` headers to maintain the same thread
-      mailOptions.inReplyTo = messageId;
-      mailOptions.references = [messageId];
-    }
+
+      // // Set the `inReplyTo` and `references` headers to maintain the same thread
+      // mailOptions.inReplyTo = messageId;
+      // mailOptions.references = [messageId];
+    
 
     try {
       console.log('messagedetails',mailOptions);
@@ -125,10 +128,11 @@ export class AppService {
           let count = 0;
           const parsingPromises = [];
           const emailDetails = [];
+          const accountdata = await this.getAccountData();
 
           imap.once('ready', () => {  
             imap.openBox('INBOX', false, () => {
-              imap.search(['UNSEEN', ['FROM', 'campaigne02@gmail.com']], (err, results) => {
+              imap.search(['UNSEEN', ['FROM', accountdata.fromEmail]], (err, results) => {
                 if (err) {
                   console.log('Error searching for unseen emails:', err);
                   imap.end();
@@ -162,7 +166,7 @@ export class AppService {
                         
                         setTimeout(async () => {
                           const { parsed } = emailDetails[0];
-                          this.sendReply(emailDetails[0].parsed.from.value[0].address, emailDetails[0].parsed.messageId, isInInbox)
+                          this.sendReply(emailDetails[0].parsed.from.value[0].address, emailDetails[0].parsed.messageId, emailDetails[0].parsed.subject )
                         }, 120000); 
                         count++;
 
@@ -229,6 +233,24 @@ export class AppService {
     console.log('Retrieved users:', users);
     return users;
   }
+
+  // async getaccountdata():  Promise<AccountCredentials| null> {
+  //   const accountCredentialsData = await this.accountCredentialsModel.find().exec();
+  //   console.log(accountCredentialsData,"accountCredentialsData");
+  //   return accountCredentialsData;
+  // }
+
+  async getAccountData(): Promise<AccountCredentials | null> {
+    try {
+      const accountCredentialsData = await this.accountCredentialsModel.findOne().exec();
+      console.log(accountCredentialsData, "accountCredentialsData");
+      return accountCredentialsData;
+    } catch (error) {
+      console.error('Error retrieving account data:', error);
+      throw error;
+    }
+  }
+  
 
 }
 
